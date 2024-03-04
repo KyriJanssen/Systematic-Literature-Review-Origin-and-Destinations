@@ -1,0 +1,224 @@
+---
+title: "Untitled"
+author: "Kyri Janssen"
+date: "2022-11-15"
+output: html_document
+---
+
+```{r}
+
+library("tidyverse")
+library("here")
+library(FactoMineR)
+library(factoextra)
+library(corrplot)
+library(ggplot2)
+library(ggrepel)
+library(ggforce)
+library(stringr)
+library(sjPlot)
+library(janitor)
+library(openxlsx)
+
+```
+#load in the data and select the variables for the MCA
+
+```{r}
+SLR1 <- read_csv2("C:/Users/kmjjanssen/OneDrive - Delft University of Technology/Work/Literature/SLR/Data/SLR_analysis.csv") 
+
+sel1 <- SLR1 %>%
+  select(Topic, Type_gentri_new, concept_new, Method_new, Data_ownership_n, Time_data_n, Context_scale, 
+         Administrative_category, Unit_new, Extent_movements, Country_NEW, Phase, Segregation, Origin, Destination)
+
+
+
+rep_str = c("Residential trajectories of displacees" = "Trajectories of displacees", "Residential trajectories of gentrifiers" = "Trajectories of gentrifiers")
+
+sel1$Topic <- str_replace_all(sel1$Topic, rep_str)
+```
+
+
+
+# Run MCA 
+```{r}
+mca1 = MCA(sel1, graph =FALSE)
+```
+
+##create dataframes with variables of the dimensions, eigenvalues, and contributions
+
+```{r}
+
+mca1_vars_df = data.frame(mca1$var$coord) #I include the variable name for each category in the last column 
+mca1_obs_df = data.frame(mca1$ind$coord) 
+mca1_eig_df = data.frame(mca1$eig)
+mca1_var_cos2 = data.frame(mca1$var$cos2)
+mca1_obs_cos2 = data.frame(mca1$ind$cos2)
+
+```
+
+
+#Plot variable coordinates in a plot
+```{r}
+
+
+row_names_df_to_remove <- c("Segregation_na", "Origin_na")
+mca1_vars_df <- mca1_vars_df[!(row.names(mca1_vars_df) %in% row_names_df_to_remove),]
+mca1_var_cos2 <- mca1_var_cos2[!(row.names(mca1_var_cos2) %in% row_names_df_to_remove),]
+
+
+
+
+mca1_vars_df$label <- rownames(mca1_vars_df)
+
+
+plot_2 <- ggplot(mca1_vars_df, aes(x=Dim.1, y=Dim.2)) + 
+  geom_point(position = position_dodge(width = 0.5 )) + 
+  geom_vline(xintercept = 0)  + geom_hline(yintercept = 0) +
+  geom_label_repel(aes(label = label),box.padding   = 0.2, 
+                   size=3, point.padding = 0.2,
+                   segment.color = 'grey50', label.size = 0.1, max.overlaps = 15) +
+  theme_classic() + theme(legend.position = "none")+
+  labs(caption = "MCA out of 48 articles") #+   ggsave("mca1plot3.svg" )
+
+
+#save_plot(file = "mcaplot.svg", fig = plot1, width = 10, height=8)
+
+
+plot_2 <- plot_2 + expand_limits(x = c(-2, 3.5), y = c(-2.2, 2.2))
+
+plot_2
+
+```
+
+
+# perform K-nearest neighbor clustering analysis on the MCA dimensions 
+```{r}
+mca_vars_num <- mca1_vars_df %>%
+  select(Dim.1, Dim.2)
+
+
+k2_1 <- kmeans(mca_vars_num, centers = 3, nstart=25)
+
+
+```
+
+# calculate standard deviation of the clusters
+
+```{r}
+clusters <- k2_1$cluster
+centers <- k2_1$centers
+
+
+res_sd <- NULL
+for (cl in c(unique(clusters))){
+    df_part <- mca_vars_num[clusters == cl, ]
+
+    # Calculate Euclidian distance between 
+    # each point (row) and cluster center.
+    dist <- sqrt(rowSums((df_part - centers[cl, ]) ** 2))
+
+    # Calculate SD for each column (i.e. SD along each axis)
+    sd_s <- apply(df_part - centers[cl, ], 2, sd)
+    names(sd_s) <- paste("sd_", colnames(df_part), sep = "")
+
+    res_part <- c(cluster = cl, total_sd = sd(dist), sd_s)
+    res_sd <- rbind(res_sd, res_part)
+}
+
+res_sd <- as.data.frame(res_sd)
+rownames(res_sd) <- res_sd$cluster
+```
+
+
+#Print standard-devations, and centers of each cluster
+```{r}
+res_sd$sd_Dim.1
+```
+
+```{r}
+res_sd$sd_Dim.2
+```
+
+```{r}
+print(k2_1$centers)
+
+```
+
+
+# Create a dataframe out of the clusters centers and standard deviations
+```{r}
+cluster_df2 <- data.frame("Cluster"=c("Cluster 1", "Cluster 2", "Cluster 3"),
+                  "Dim1"=c(-0.1112676   ,
+                           1.7238843      ,
+                         1.5578184  ),
+                  "Dim2"=c(-0.0398334,
+                           -1.5995440,
+                            1.6175377),
+                  "Sd1"=c(0.6821503   ,
+                          0.4866247    ,
+                          1.8422183 ),
+                  "Sd2"=c(0.6064306  ,
+                         0.4545061   ,
+                         1.8975165))
+```
+
+
+
+
+# Plot clusters by their centers and standard devations
+```{r}
+plot_1 <- ggplot(cluster_df2, aes(x=Dim1, y=Dim2,color=Cluster)) + 
+  geom_vline(xintercept = 0)  + geom_hline(yintercept = 0) +
+  geom_point() + geom_ellipse(aes(x0 = Dim1, y0 = Dim2, a = Sd1, b = Sd2, angle = 0)) +
+  geom_label_repel(aes(label = Cluster),box.padding   = 0.01, 
+                   size=3, point.padding = 10,
+                   segment.color = 'grey50', label.size = 0.1, max.overlaps = 10) +
+  annotate(geom="text", x= 1.4, y=1.65, label="Quantitative studies following gentrifiers; 
+           gentrifiers moving to the city",
+           color="#333333", size=3.5) +
+  annotate(geom="text", x=1.8, y= -2, label="State-led gentrification studies following displacees",
+           color="#333333", size=3.5) +
+  annotate(geom="text", x=0.9, y=0.25, label="Quantitative  studies following gentrifiers; 
+           gentrifiers moving within the city",
+           color="#333333", size=3.5) +
+  annotate(geom="text", x= -0.637, y= - 0.75, label="Qualitative 
+           urban restructuring studies",
+           color="#333333", size=3.5) +
+  theme_classic() + theme(legend.position = "none")+
+  labs(caption = "MCA out of 47 articles")# + ggsave("clusterplot5.png")
+
+
+
+
+plot_1 <- plot_1 + expand_limits(x = c(-2, 3.5), y = c(-2.2, 2.2))
+
+plot_1
+
+```
+
+# Plot Observation coordinate plot
+```{r}
+
+
+mca1_obs_df$label <-  rownames(mca1_obs_df)
+
+
+plot_3 <-  ggplot(mca1_obs_df, aes(x=Dim.1, y=Dim.2)) + 
+  geom_point(position = position_dodge(width = 0.5 )) + 
+  geom_vline(xintercept = 0)  + geom_hline(yintercept = 0) +
+  geom_label_repel(aes(label = label),box.padding   = 0.2, 
+                   size=3, point.padding = 0.2,
+                   segment.color = 'grey50', label.size = 0.1, max.overlaps = 15) +
+  theme_classic() + theme(legend.position = "none")+
+  labs(caption = "MCA out of 48 articles") #+   ggsave("mca1plot3.svg" )
+plot_3
+
+
+plot_3 <- plot_3 + expand_limits(x = c(-2, 3.5), y = c(-2.2, 2.2))
+
+plot_1
+
+
+```
+
+
